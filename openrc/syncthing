@@ -1,0 +1,98 @@
+#!/usr/bin/openrc-run
+# Copyright (c) 2020 Albert Tellez 
+# Distributed under the terms of the BSD-3 Licence 
+description="Service for Syncthing, a file syncronization program"
+
+
+##########################################################################
+##CHANGE THIS FOR DESIRED USER/GROUP
+#perhaps changed in the future to default syncthing:syncthing?
+
+user="alsetema"
+group="syncthing"
+
+##########################################################################
+
+
+#variables
+#the log should probably be somewhere in /var/log but then syncthing would not be able to write to it?
+logfile="/home/${user}/.config/syncthing/syncthing.log"
+pidfile="/run/syncthing.pid"
+syncthing_args="-no-browser -logflags=3 -logfile=${logfile}"
+extra_commands="checklog"
+
+
+checklog() {
+	#checking for the log file, if not creating it
+	
+	if [ ! -w ${logfile} ];
+	then
+		touch ${logfile}
+		#this created the file as superuser, we might want to change that
+		chown ${user}:${group} ${logfile}
+		#check the status of chown (maybe the users/groups didnt exist)
+		chown_result=$?
+		# $? is the variable that holds the return code of the last command executed
+		if [ ${chown_result} -ne 0 ];
+		then
+			return 1
+		else
+			chmod 600 ${logfile}
+			return 0
+		fi
+	fi
+}
+
+
+depend() {
+	need net
+}
+
+##since there are some versions of start-stop-daemon that don't come with --remove-pidfile... 
+
+remove_pid() {
+	if [ -f ${pidfile} ];
+	then
+		rm ${pidfile}
+	fi
+	rm_result=$?
+	if [ ${rm_result} -ne 0 ];
+	then
+		return 1
+	else
+		return 0
+	fi
+}
+
+start() { 
+	#checking if it returns one or not, if not it failed to create the log and it cannot launch
+	checklog
+	checklog_return=$?
+	if [ $checklog_return -ne 0 ];
+	then
+		echo "Could not create the log file ${logfile} . Perhaps non existing user/directory? check the service file!"
+		return 1;
+	else
+	ebegin "Starting syncthing as ${user}"
+	start-stop-daemon --start --user ${user}:${group} --background --make-pidfile --pidfile ${pidfile} --exec "/usr/bin/syncthing" -- ${syncthing_args}
+ #the -- after the executable is to determine the arguments of it
+	eend $?
+	fi
+}
+
+
+
+stop() {
+	ebegin "Stopping syncthing for user ${user}"
+	start-stop-daemon --stop --pidfile ${pidfile} --user ${user} --signal TERM --retry KILL/7 --progress
+	#line above will kill the process if not killed gracefully in 7 seconds
+	echo "Attempting to remove PID file..."
+	remove_pid
+	if [ $? -ne 0 ];
+	then
+		echo "Error: PID file could not be deleted"
+	else
+		echo "Success"
+	fi	
+	eend $?
+}
